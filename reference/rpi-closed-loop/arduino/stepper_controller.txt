@@ -1,0 +1,118 @@
+#include <AccelStepper.h>
+#include <Encoder.h>
+
+int incomingByte=0;
+int resetPin = 4;
+int mfc1 = 5;
+int mfc2 = 6;
+int mfc3 = 7;
+AccelStepper stepper(1, 8, 9);
+Encoder myEnc(3, 2);
+
+const byte numChars = 32;
+char receivedChars[numChars];
+char tempChars[numChars];
+
+char messageFromPC[numChars] = {0};
+int integerFromPC = 0;
+float floatFromPC = 0.0;
+
+boolean newData = false;
+
+long multiplier = 1000; //set to some number above expected number of revolutions in a trial - will keep values positive
+long stepsPerRevolution = 800;
+long homeAngle = (long)multiplier*stepsPerRevolution;
+long previousAngle = homeAngle;
+long newAngle1 = previousAngle;
+long offset = (long)multiplier*stepsPerRevolution;
+float conv = (stepsPerRevolution*1000)/256;
+long conv1 = (long)conv;
+int microstepPin=11;
+
+int x = 0;
+long y = 0;
+
+void receiveMarkers() {
+    static boolean recvInProgress = false;
+    static byte ndx = 0;
+    char startMarker = '<';
+    char endMarker = '>';
+    char rc;
+
+    while (Serial.available() > 0 && newData == false) {
+        rc = Serial.read();
+
+        if (recvInProgress == true) {
+            if (rc != endMarker) {
+                receivedChars[ndx] = rc;
+                ndx++;
+                if (ndx >= numChars) {
+                    ndx = numChars - 1;
+                }
+            }
+            else {
+                receivedChars[ndx] = '\0'; // terminate the string
+                recvInProgress = false;
+                ndx = 0;
+                newData = true;
+            }
+        }
+
+        else if (rc == startMarker) {
+            recvInProgress = true;
+        }
+    }
+}
+
+
+void setup() {
+
+  digitalWrite(mfc1, LOW);
+  digitalWrite(mfc2, HIGH);
+  digitalWrite(mfc3, LOW);
+  
+  digitalWrite(resetPin, HIGH);
+  pinMode(resetPin, OUTPUT);
+  
+  pinMode(microstepPin,OUTPUT);
+  digitalWrite(microstepPin,HIGH);
+  
+  Serial.begin(9600);
+
+  stepper.setMaxSpeed(20000); //set max speed the motor will turn (steps/second) 20000
+  stepper.setAcceleration(8000); //set acceleration (steps/second^2) 80000
+  stepper.setCurrentPosition(homeAngle);
+  stepper.runToNewPosition(homeAngle);
+  stepper.setCurrentPosition(homeAngle);
+  stepper.moveTo(homeAngle);
+  
+  delay(500);
+  
+  myEnc.write(homeAngle);
+
+}
+
+
+void loop() {
+
+  receiveMarkers();
+  if (newData==true){
+    strcpy(tempChars, receivedChars);
+    newData = false;
+    if(strcmp(tempChars,"a")==0)
+    {
+      digitalWrite(resetPin, LOW);
+     }
+    else 
+    {
+      long y = atol(tempChars);
+      Serial.println((long)myEnc.read());
+      stepper.setCurrentPosition((long)myEnc.read());
+      stepper.moveTo(y);
+    }
+  }
+  
+
+  delayMicroseconds(100);
+  stepper.run();
+}
