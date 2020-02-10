@@ -6,6 +6,7 @@ class Lights(object):
     def __init__(self, read_queue, write_queue):
         self.read_queue = read_queue
         self.write_queue = write_queue
+        self.running = True
         self.read = False
         self.written = False
         self.read_and_wrote = threading.Event()
@@ -29,14 +30,17 @@ class Lights(object):
         if self.read and self.written:
             self.read_and_wrote.set()
 
-    def _reset(self):
+    def reset(self):
         # Look for signal from master
         self.read, self.written = False, False
         self.read_and_wrote.clear()
 
+    def safe_shutdown(self):
+        self.running = False
+
 
     def run(self, read_queue, write_queue):
-        while 1:
+        while self.running:
             if self.read_and_wrote.is_set():
                 pass
             else:

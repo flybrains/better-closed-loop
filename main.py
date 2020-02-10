@@ -59,7 +59,12 @@ class ReplayInterface(Interface):
 		super().__init__(hw_params=hw.params)
 
 	def clean(self):
-
+		timestamp = self.data[0]
+		mfc1, mfc2, mfc3 = float(self.data[2]), float(self.data[3]), float(self.data[4])
+		led1, led2 = float(self.data[5]), float(self.data[6])
+		posx, posy, net_vel = float(self.data[7]), float(self.data[8]), float(self.data[9])
+		heading = float(self.data[10])
+		motor_target, ft_frame, ft_error, ft_roll, ft_pitch, ft_yaw = None, None, None, None, None, None
 		return [motor_target, heading, posx, posy, net_vel, ft_roll, ft_pitch, ft_yaw, ft_frame, ft_error, timestamp, mfc1, mfc2, mfc3, led1, led2]
 
 
@@ -76,38 +81,64 @@ class ModuleInterface(object):
 		self.pi_socket = init_pi_connection()
 		self.logger = init_logger()
 
+	def safe_shutdown(self):
+		light_controller.safe_shutdown()
+		motor_controller.safe_shutdown()
+		mfc_controller.safe_shutdown()
 
-	def run(self):
-		while True:
-			ret
-			if not data:
-				break
-			line = data.decode('UTF-8')
-			toks = line.split(',')
 
-			if config.REPLAY:
-				# posx, posy, mfc1, mfc2, mfc3
-				mfc1, mfc2, mfc3 = toks[0], toks[1],toks[2]
-				SENDSTRING = '<'+ '{},{},{},{},{},{},{}'.format(1,800000, mfc1, mfc2, mfc3, 0.0, 0.0) +'>\n'
-				RPI_SOCK.sendto(str.encode('{}'.format(SENDSTRING)), ("192.168.137.10", 5000))
 
-			else:
-				if ((len(toks) < 24) | (toks[0] != "FT")):
-					('Bad read')
-					continue
 
 if __name__=='__main__':
+
 	incoming_interface = FicTracInterface()
 	incoming_interface.connect_incoming()
 
 	outgoing_interface = RaspberryPiInterface()
 	outgoing_interface.connect_outgoing()
 
-	while True:
-		ret = incoming_interface.read_incoming()
-		if not ret:
-			break
-		data = incoming_interface.clean()
+	light_input = queue.queue()
+	motor_input = queue.queue()
+	mfc_input = queue.queue()
+
+	light_output = queue.queue()
+	motor_output = queue.queue()
+	mfc_output = queue.queue()
+
+	light_controller = Lights()
+	motor_controller = Motor()
+	mfc_controller = MFC()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+		executor.submit(light_controller.run, light_input, light_output)
+		executor.submit(motor_controller.run, motor_input, motor_output)
+		executor.submit(mfc_controller.run, mfc_input, mfc_output)
+
+		while True:
+			ret = incoming_interface.read_incoming()
+			if not ret:
+				safe_shutdown()
+				break
+			data = incoming_interface.clean()
+			light_info, motor_info, mfc_info = break_for_subsystems(data)
+			light_input.put(light_info)
+			motor_input.put(motor_info)
+			mfc_input.put(mfc_info)
+
+			while not light_controller.read_and_wrote.is_set() and not motor_controller.read_and_wrote.is_set() and not mfc_controller.read_and_wrote.is_set():
+				time.sleep(0.01)
+
+			light_controller.reset()
+			motor_controller.reset()
+			mfc_controller.reset()
+
+			a = light_output.get()
+			b = motor_output.get()
+			c = mfc_output.get()
+			out_data= join(a,b,c)
+			send_to_pi(out_data)
+
+		safe_shutdown()
 
 	incoming_interface.kill()
 	outgoing_interface.kill()
