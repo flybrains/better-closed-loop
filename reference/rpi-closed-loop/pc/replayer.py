@@ -50,9 +50,11 @@ class Replayer(object):
                     #self.conn.send(str.encode('{},{},{}'.format(playback[0][0],playback[0][1],playback[0][2])))
                     time.sleep(0.015)
                     index = 0
-                    while True:
+                    for i in range(20000):
+                    #while True:
                         try:
-                            delta = 0.002
+                            delta = 0.03
+                            print(i)
                             # st = str(times[index+1] - times[index]).split('.')
                             # if len(st)==1:
                             #     delta=float(0.0)

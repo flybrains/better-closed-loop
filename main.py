@@ -7,88 +7,13 @@ import threading
 import concurrent.futures
 from datetime import datetime
 
+from lights import Lights
+
 import hardware_parameters as hw
 from utilities import init_logger
 from socket import socket, AF_INET, SOCK_STREAM, SOCK_DGRAM
 
-class Interface(object):
-	def __init__(self, hw_params=hw.params, type=None):
-		self.local_host = hw_params['local_host']
-		self.local_port = hw_params['local_port']
-		self.type = type
-		self.initialized = False
 
-	def connect(self):
-		if self.type is 'incoming':
-			self.incoming_sock = socket(AF_INET, SOCK_STREAM)
-			time.sleep(0.02)
-			self.incoming_sock.connect((self.local_host, self.local_port))
-			self.initialized = True
-		elif self.type is 'outgoing':
-			self.outgoing_sock = socket(AF_INET, SOCK_DGRAM)
-			time.sleep(0.02)
-		else:
-			self.initialized = False
-
-	def read(self):
-		if self.type is 'incoming':
-			self.data = self.incoming_sock.recv(1024)
-			if not self.data:
-				return False
-			else:
-				line = self.data.decode('UTF-8')
-				self.toks = line.split(',')
-				return True
-		else:
-			return False
-
-	def kill(self):
-		sock.close()
-
-class FicTracInterface(Interface):
-	def __init__(self):
-		super().__init__(hw_params=hw.params, type='incoming')
-
-	def clean(self):
-		ft_frame, ft_error, ft_roll = float(self.data[1]), float(self.data[5]), float(self.data[6])
-		ft_pitch, ft_yaw = float(self.data[7]), float(self.data[8])
-		posx, posy = float(self.data[15])*3, -float(self.data[16])*3
-		heading, net_vel = -float(self.data[17]),float(self.data[19])*3
-		motor_heading_map = heading % (2*np.pi)
-		prop_head = motor_heading_map/(2*np.pi)
-		motor_target = int(prop_head*hw.params['steps_per_rev'])
-		timestamp, mfc1, mfc2, mfc3, led1, led2 = None, None, None, None, None, None
-		self.toks = [motor_target, heading, posx, posy, net_vel, ft_roll, ft_pitch, ft_yaw, ft_frame, ft_error, timestamp, mfc1, mfc2, mfc3, led1, led2]
-
-class ReplayInterface(Interface):
-	def __init__(self):
-		super().__init__(hw_params=hw.params, type='incoming')
-
-	def clean(self):
-		# timestamp = self.data[0]
-		# mfc1, mfc2, mfc3 = float(self.data[2]), float(self.data[3]), float(self.data[4])
-		# led1, led2 = float(self.data[5]), float(self.data[6])
-		# posx, posy, net_vel = float(self.data[7]), float(self.data[8]), float(self.data[9])
-		# heading = float(self.data[10])
-		# motor_target, ft_frame, ft_error, ft_roll, ft_pitch, ft_yaw = None, None, None, None, None, None
-		# self.toks = [motor_target, heading, posx, posy, net_vel, ft_roll, ft_pitch, ft_yaw, ft_frame, ft_error, timestamp, mfc1, mfc2, mfc3, led1, led2]
-		self.out = self.toks[0]
-
-class RaspberryPiInterface(Interface):
-	def __init__(self):
-		super().__init__(hw_params=hw.params, type='outgoing')
-
-	def write(self,toks):
-		print('RPi Write',toks)
-
-class LoggingInterface(Interface):
-	def __init__(self):
-		super().__init__(hw_params=hw.params, type='outgoing')
-		self.logger = init_logger()
-
-	def write(self,toks):
-		toks.insert(0, datetime.now().strftime("%m/%d/%Y-%H:%M:%S.%f"))
-		self.logger.info(','.join(toks))
 
 class InterfaceManager(object):
 	def __init__(self, use_fictrac=True, use_pi=True, use_logging=True):
@@ -97,6 +22,10 @@ class InterfaceManager(object):
 		self.use_logging = use_logging
 		self.running = False
 		self.outgoing_interfaces = []
+
+		self.light_input_queue = queue.Queue()
+		self.light_output_queue = queue.Queue()
+
 
 	def _spin_incoming_interface(self):
 		if self.use_fictrac:
@@ -113,19 +42,35 @@ class InterfaceManager(object):
 
 		[interface.connect() for interface in self.outgoing_interfaces]
 
-	def run_interfaces(self, *args, **kwargs):
-		if self.incoming_interface.initialized:
-			self.running = True
-			try:
-				while self.running:
-					ret = self.incoming_interface.read()
-					self.incoming_interface.clean()
-					if ret == False:
-						break
-					[interface.write(data) for interface in self.outgoing_interfaces]
+	def _spin_hardware_channels(self):
+		self.lights = Lights(self.light_input_queue, self.light_output_queue)
+		self.motor = Lights(self.light_input_queue, self.light_output_queue)
+		self.mfcs = Lights(self.light_input_queue, self.light_output_queue)
 
-			except KeyboardInterrupt:
-				sys.exit()
+	def run_interfaces(self):
+
+		if self.incoming_interface.initialized == False:
+			sys.exit()
+
+		self.running = True
+		a = time.time()
+		try:
+			while self.running:
+				ret = self.incoming_interface.read()
+				output = self.incoming_interface.clean()
+				if ret == False:
+					break
+
+				self.light_input_queue.put([output[i] for i in self.lights.selection_mask])
+
+				self.lights.read_and_wrote.wait()
+				updated = self.light_output_queue.get()
+				self.lights.reset()
+
+				[interface.write(data) for interface in self.outgoing_interfaces]
+
+		except KeyboardInterrupt:
+			sys.exit()
 
 	def safe_shutdown(self):
 		light_controller.safe_shutdown()
@@ -137,12 +82,16 @@ if __name__=='__main__':
 	manager = InterfaceManager(use_fictrac=False, use_pi=False, use_logging=False)
 	manager._spin_incoming_interface()
 	manager._spin_outgoing_interfaces()
-	manager.run_interfaces(print=False)
+	manager._spin_hardware_channels()
+
+	lightKill = threading.Event()
+	mainKill = threading.Event()
+
+	with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+		executor.submit(manager.run_interfaces)
+		executor.submit(manager.lights.run)
 
 
-
-	# outgoing_interface = RaspberryPiInterface()
-	# outgoing_interface.connect_outgoing()
 	#
 	# light_input = queue.Queue(maxsize=30)
 	# # motor_input = queue.queue()

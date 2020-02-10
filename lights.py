@@ -1,52 +1,47 @@
+import time
 import queue
 import threading
 import hardware_parameters as hw
 
 class Lights(object):
     def __init__(self, read_queue, write_queue):
-        self.read_queue = read_queue
-        self.write_queue = write_queue
+        self.selection_mask = [0]#[1,2,3,4,14,15]
         self.running = True
         self.read = False
         self.written = False
         self.read_and_wrote = threading.Event()
+        self.read_queue = read_queue
+        self.write_queue = write_queue
 
     def _get_vals(self):
-        try:
-            self.read = True
-            return self.read_queue.get()
-        except UnboundLocalError:
-            self.read = False
-            return None
+        self.read = True
+        return self.read_queue.get()
 
     def _put_vals(self, vals):
-        try:
-            self.write_queue.put()
-            self.written = True
-        except UnboundLocalError:
-            self.written = False
+        self.write_queue.put(vals)
+        self.written = True
 
     def _signal(self):
         if self.read and self.written:
             self.read_and_wrote.set()
 
     def reset(self):
-        # Look for signal from master
         self.read, self.written = False, False
         self.read_and_wrote.clear()
 
     def safe_shutdown(self):
         self.running = False
 
+    def run(self):
 
-    def run(self, read_queue, write_queue):
         while self.running:
             if self.read_and_wrote.is_set():
                 pass
             else:
                 vals_in = self._get_vals()
 
-                # DO STUFF
+                # Logic Here
+                vals_out = int(vals_in[0])*4
 
                 self._put_vals(vals_out)
                 self._signal()
