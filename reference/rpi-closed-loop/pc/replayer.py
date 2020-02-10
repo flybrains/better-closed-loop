@@ -3,16 +3,17 @@ import os
 import socket
 import time
 import config
+import numpy as np
 from datetime import datetime
 
 class Replayer(object):
-    def __init__(self, log_files, host, port, flush_duration):
-        self.log_files = log_files
-        self.connected = False
+    def __init__(self, host, port):#self, log_files, host, port, flush_duration):
+        # self.log_files = log_files
+        # self.connected = False
         self.host = host
         self.port = port
         self.flushed = True
-        self.flush_duration = int(flush_duration)
+        # self.flush_duration = int(flush_duration)
 
     @staticmethod
     def _parse_log(address):
@@ -36,30 +37,34 @@ class Replayer(object):
                         pass
         return playback, times
 
-    def _replay(self, log_address):
-        playback, times = self._parse_log(log_address)
+    def _replay(self):#, log_address):
+        #playback, times = self._parse_log(log_address)
         if self.flushed:
             self.flushed = False
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as self.sock:
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self._connect()
 
                 with self.conn:
-                    self.conn.send(str.encode('{},{},{}'.format(playback[0][0],playback[0][1],playback[0][2])))
+                    self.conn.send(str.encode('2'))#'{},{},{}'.format(np.random.randint(1,100),np.random.randint(1,100),np.random.randint(1,100))))
+                    #self.conn.send(str.encode('{},{},{}'.format(playback[0][0],playback[0][1],playback[0][2])))
                     time.sleep(0.015)
                     index = 0
                     while True:
                         try:
-                            st = str(times[index+1] - times[index]).split('.')
-                            if len(st)==1:
-                                delta=float(0.0)
-                            else:
-                                delta = float('0.{}'.format(st[-1]))
+                            delta = 0.002
+                            # st = str(times[index+1] - times[index]).split('.')
+                            # if len(st)==1:
+                            #     delta=float(0.0)
+                            # else:
+                            #     delta = float('0.{}'.format(st[-1]))
                             time.sleep(delta)
-                            print('{},{},{}'.format(playback[index][0],playback[index][1],playback[index][2]))
-                            self.conn.send(str.encode('{},{},{}'.format(playback[index][0],playback[index][1],playback[index][2])))
+                            self.conn.send(str.encode('2'))#self.conn.send(str.encode('{},{},{}'.format(np.random.randint(1,100),np.random.randint(1,100),np.random.randint(1,100))))
+                            # self.conn.send(str.encode('{},{},{}'.format(playback[index][0],playback[index][1],playback[index][2])))
                             index += 1
-                        except IndexError:
-                            return None
+                        except (KeyboardInterrupt, BrokenPipeError, ConnectionResetError) as e:
+                            self.sock.close()
+                            sys.exit()
         else:
             self._flush(self.flushDur)
 
@@ -84,7 +89,8 @@ class Replayer(object):
 
 
 if __name__=='__main__':
-    HOST, PORT = config.LOCAL_HOST, config.LOCAL_PORT
-    log_files = [os.path.join(config.REPLAY_FOLDER,e) for e in os.listdir(config.REPLAY_FOLDER)]
-    replayer = Replayer(log_files, HOST, PORT, flush_duration=0)
-    replayer.run_batch()
+    # HOST, PORT = config.LOCAL_HOST, config.LOCAL_PORT
+    # log_files = [os.path.join(config.REPLAY_FOLDER,e) for e in os.listdir(config.REPLAY_FOLDER)]
+    replayer = Replayer('127.0.0.1', 3310)#log_files, HOST, PORT, flush_duration=0)
+    #replayer.run_batch()
+    replayer._replay()
